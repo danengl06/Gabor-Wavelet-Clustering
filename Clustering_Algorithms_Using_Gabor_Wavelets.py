@@ -31,10 +31,10 @@ L = 2*P
 
 
 # Number of activation steps
-# T = 4000*L
+T = 4000*L
 
 # Smaller amount for testing purposes
-T = 200*L
+# T = 1000*L
 
 
 # Random value creation
@@ -145,6 +145,7 @@ def real_shift_invariant_kmeans(windows, K, P, method_idx, max_iter=10, rng=None
        
         # Create a buffer for the newly calculated centroids (This will be filled with values in the update step)
         new_centroids = np.zeros_like(centroids)
+
        
         # END OF NEW CLUSTERING CODE -------------------------------------------------------------------------------
 
@@ -272,7 +273,9 @@ for run_index in range(n_runs):
     # C_norm is created by normalizing C_true
     C_norm = C_true / np.sqrt(np.sum(C_true**2, axis=1, keepdims=True))
 
-    
+    # Code to make sure each noise sweep keeps the same rng seed
+    kmeans_seed = rng.integers(0, 2**32 - 1)
+
 
 
     # Noise sweep function
@@ -287,13 +290,15 @@ for run_index in range(n_runs):
 
 
         for method_idx, method_name in enumerate(method_names):
+            # Makes sure seeds for noise sweeps are the same
+            method_rng = np.random.default_rng(kmeans_seed)
             # K-Means clustering function call
             centroids, labels, shifts = real_shift_invariant_kmeans(
-                windows, K=K_true, P=P, method_idx=method_idx, max_iter=10, rng=rng
+                windows, K=K_true, P=P, method_idx=method_idx, max_iter=10, rng=method_rng
             )
 
 
-            # # Take the maximum cosine similarity for each true wavelet
+            # Take the maximum cosine similarity for each true wavelet - calls cosmax function code
             cosmax = cosine_sim(C_norm, centroids)
             alignments = np.max(cosmax, axis=1)  
 
@@ -323,7 +328,7 @@ for run_index in range(n_runs):
             rmse_nnsse = np.sqrt(np.mean(nnsse))
            
            # Prints min, mean, max, SSE, and NNSSE for all six methods
-            print(f"{method_name:<12} | Min: {np.min(alignments):.3f} | Mean: {np.mean(alignments):.3f} | Max: {np.max(alignments):.3f} | SSE: {rmse_sse:.3f} | NNSSE: {rmse_nnsse:.3f}")
+            print(f"{method_name:<12} | Min: {np.min(alignments):.9f} | Mean: {np.mean(alignments):.9f} | Max: {np.max(alignments):.9f} | SSE: {rmse_sse:.9f} | NNSSE: {rmse_nnsse:.9f}")
            
             all_alignments[method_idx, :, noise_factor, run_index] = alignments
             perf_stats[method_idx, :, noise_factor, run_index] = np.array([
