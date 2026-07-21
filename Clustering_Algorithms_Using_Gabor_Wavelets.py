@@ -34,7 +34,7 @@ L = 2*P
 T = 4000*L
 
 # Smaller amount for testing purposes
-# T = 1000*L
+# T = 200*L
 
 
 # Random value creation
@@ -273,7 +273,7 @@ for run_index in range(n_runs):
     # C_norm is created by normalizing C_true
     C_norm = C_true / np.sqrt(np.sum(C_true**2, axis=1, keepdims=True))
 
-    # Code to make sure each noise sweep keeps the same rng seed
+    # Code to make sure each noise sweep keeps the same rng seed - This code fixes the previous error
     kmeans_seed = rng.integers(0, 2**32 - 1)
 
 
@@ -334,3 +334,10 @@ for run_index in range(n_runs):
             perf_stats[method_idx, :, noise_factor, run_index] = np.array([
                 np.min(alignments), np.mean(alignments), np.max(alignments), rmse_sse, rmse_nnsse
             ])
+
+# Saves clustering data as a .npz file
+np.savez_compressed(
+    'Clustering_Results.npz',
+    perf_stats=perf_stats,
+    all_alignments=all_alignments,
+)
