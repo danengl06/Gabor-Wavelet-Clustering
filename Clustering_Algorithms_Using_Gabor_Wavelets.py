@@ -2,14 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-
-
 from BOWaves.utilities import sikmeans_utils, wrappers
 from scipy.optimize import nnls
 from scipy.sparse.linalg import svds
-
-
-
 
 # MAIN FUNCTION
 
@@ -32,6 +27,7 @@ L = 2*P
 
 # Number of activation steps
 T = 4000*L
+
 
 # Smaller amount for testing purposes
 # T = 200*L
@@ -106,7 +102,6 @@ def generate_time_series_with_dict(P,K_true,rate_lim,height_min,height_max_lim,r
 
 
 
-
 def real_shift_invariant_kmeans(windows, K, P, method_idx, max_iter=10, rng=None):
 
 
@@ -146,11 +141,13 @@ def real_shift_invariant_kmeans(windows, K, P, method_idx, max_iter=10, rng=None
         # Create a buffer for the newly calculated centroids (This will be filled with values in the update step)
         new_centroids = np.zeros_like(centroids)
 
+
        
         # END OF NEW CLUSTERING CODE -------------------------------------------------------------------------------
 
 
         # This is where the six functions differ
+
 
         if method_idx == 0:  # Default averaging
             for sample_id, sample in enumerate(windows):
@@ -223,13 +220,12 @@ def real_shift_invariant_kmeans(windows, K, P, method_idx, max_iter=10, rng=None
                     new_centroids[cluster_id] = np.mean(X_shifted[members], axis=0)
 
 
-
-
         # Re-normalizes centroids before assigning in the next loop iteration
         norm = np.sqrt(np.sum(new_centroids**2, axis=1, keepdims=True))
         centroids = np.divide(new_centroids, norm, out=np.zeros_like(new_centroids), where=norm!=0)
        
     return centroids, labels, shifts
+
 
 
 # SHIFT INVARIENT function to find the cosine_similarity between ground truth and new centroids.
@@ -244,8 +240,8 @@ def cosine_sim(C_true, centroids):
     return cosmax
 
 
-# MAIN CODE
 
+# MAIN CODE
 
 method_names = ['ave', 'nnls', 'svd', 'sph-svd', 'sph-nnls', 'sph-ave']
 n_methods = len(method_names)
@@ -273,20 +269,22 @@ for run_index in range(n_runs):
     # C_norm is created by normalizing C_true
     C_norm = C_true / np.sqrt(np.sum(C_true**2, axis=1, keepdims=True))
 
+
     # Code to make sure each noise sweep keeps the same rng seed - This code fixes the previous error
     kmeans_seed = rng.integers(0, 2**32 - 1)
 
 
+    noise_step = 0.20
+
 
     # Noise sweep function
     for noise_factor in range(n_noise):
-        noise_level = noise_factor / 20 * np.std(x)
+        noise_percentage = noise_factor * noise_step
+        noise_level = noise_percentage * np.std(x)
         windows_clean = x[:int(len(x)/L)*L].reshape([-1, L])
         windows = windows_clean + noise_level * rng.normal(size=windows_clean.shape)
-
-
-        # Noise level print
-        print(f"\n--- Run {run_index} | Noise Level {noise_level:.4f} ---")
+        # Print current percentage for visibility
+        print(f"\n--- Run {run_index} | Noise Level {noise_level:.4f} ({noise_percentage*100:.0f}% of Std Dev) ---")
 
 
         for method_idx, method_name in enumerate(method_names):
@@ -334,6 +332,7 @@ for run_index in range(n_runs):
             perf_stats[method_idx, :, noise_factor, run_index] = np.array([
                 np.min(alignments), np.mean(alignments), np.max(alignments), rmse_sse, rmse_nnsse
             ])
+
 
 # Saves clustering data as a .npz file
 np.savez_compressed(
