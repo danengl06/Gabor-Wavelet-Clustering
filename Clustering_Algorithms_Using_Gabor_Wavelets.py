@@ -1,3 +1,13 @@
+# Imports for speed optimization
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -5,6 +15,7 @@ import matplotlib.pyplot as plt
 from BOWaves.utilities import sikmeans_utils, wrappers
 from scipy.optimize import nnls
 from scipy.sparse.linalg import svds
+from joblib import Parallel, delayed
 
 # MAIN FUNCTION
 
@@ -30,7 +41,7 @@ T = 4000*L
 
 
 # Smaller amount for testing purposes
-# T = 200*L
+# T = 2000*L
 
 
 # Random value creation
@@ -241,22 +252,11 @@ def cosine_sim(C_true, centroids):
 
 
 
-# MAIN CODE
 
-method_names = ['ave', 'nnls', 'svd', 'sph-svd', 'sph-nnls', 'sph-ave']
-n_methods = len(method_names)
-n_noise = 5
-n_perfs = 5
-n_runs = 10
-
-
-perf_stats = np.zeros((n_methods, n_perfs, n_noise, n_runs))
-all_alignments = -np.ones((n_methods, K_true, n_noise, n_runs))
-all_rates = np.zeros((K_true, n_runs))
-all_highs = np.zeros((K_true, n_runs))
-
-
-for run_index in range(n_runs):
+# Function for single run - (Will be ran multiple times in parallel)
+# Run index is just to show how many runs, this var will not be needed when this function is utilized with real data
+def process_single_run(run_index, P, K_true, rate_lim, height_min, height_max_lim, method_names, n_noise):
+    print(f"--> [Worker Thread] Starting Run {run_index}...", flush=True)
     rng = np.random.default_rng(run_index)
 
 
@@ -303,18 +303,18 @@ for run_index in range(n_runs):
 
             sse = np.zeros(windows.shape[0])
             nnsse = np.zeros(windows.shape[0])
-           
+            
             for sample_id, sample in enumerate(windows):
                 cluster_id = labels[sample_id]
                 shift = shifts[sample_id]
                 x_shifted = sample[shift:shift + P]
-               
+                
                 # Standard SSE
                 coef = np.sum(centroids[cluster_id] * x_shifted)
                 sse[sample_id] = (np.sum(sample[:shift]**2) +
-                                  np.sum(sample[shift+P:]**2) +
-                                  np.sum((x_shifted - coef * centroids[cluster_id])**2))
-               
+                                np.sum(sample[shift+P:]**2) +
+                                np.sum((x_shifted - coef * centroids[cluster_id])**2))
+                
                 # NNLS SSE
                 coef_nnls, _ = nnls(centroids[cluster_id][:, np.newaxis], x_shifted)
                 nnsse[sample_id] = (np.sum(sample[:shift]**2) +
@@ -324,19 +324,54 @@ for run_index in range(n_runs):
 
             rmse_sse = np.sqrt(np.mean(sse))
             rmse_nnsse = np.sqrt(np.mean(nnsse))
-           
-           # Prints min, mean, max, SSE, and NNSSE for all six methods
-            print(f"{method_name:<12} | Min: {np.min(alignments):.9f} | Mean: {np.mean(alignments):.9f} | Max: {np.max(alignments):.9f} | SSE: {rmse_sse:.9f} | NNSSE: {rmse_nnsse:.9f}")
-           
-            all_alignments[method_idx, :, noise_factor, run_index] = alignments
-            perf_stats[method_idx, :, noise_factor, run_index] = np.array([
-                np.min(alignments), np.mean(alignments), np.max(alignments), rmse_sse, rmse_nnsse
-            ])
+
+            run_alignments[method_idx, :, noise_factor] = alignments
+            run_perf_stats[method_idx, :, noise_factor] = np.array(
+                [np.min(alignments), np.mean(alignments), np.max(alignments), rmse_sse, rmse_nnsse]
+            )
+
+    print(f"<-- [Worker Thread] Finished Run {run_index}!", flush=True)
+    # Return local data to the main thread
+    return run_index, rates, highs, run_perf_stats, run_alignments
 
 
-# Saves clustering data as a .npz file
-np.savez_compressed(
-    'Clustering_Results.npz',
-    perf_stats=perf_stats,
-    all_alignments=all_alignments,
-)
+# MAIN CODE
+# This will run multiple instances of the process_single_run at the same time
+if __name__ == '__main__':
+    method_names = ['ave', 'nnls', 'svd', 'sph-svd', 'sph-nnls', 'sph-ave']
+    n_methods = len(method_names)
+    n_noise = 20
+    n_perfs = 5
+    n_runs = 8
+
+    run_perf_stats = np.zeros((n_methods, n_perfs, n_noise))
+    run_alignments = -np.ones((n_methods, K_true, n_noise))
+
+
+    perf_stats = np.zeros((n_methods, n_perfs, n_noise, n_runs))
+    all_alignments = -np.ones((n_methods, K_true, n_noise, n_runs))
+    all_rates = np.zeros((K_true, n_runs))
+    all_highs = np.zeros((K_true, n_runs))
+
+    # Utilizes all available CPU cores to compute runs parallel
+    results = Parallel(n_jobs=-1, verbose=10)(
+        delayed(process_single_run)(
+            run_idx, P, K_true, rate_lim, height_min, height_max_lim, method_names, n_noise
+        )
+        for run_idx in range(n_runs)
+    )
+
+    # Collect and aggregate parallel results back into master arrays
+    for run_idx, rates, highs, run_perf_stats, run_alignments in results:
+        all_rates[:, run_idx] = rates
+        all_highs[:, run_idx] = highs
+        perf_stats[:, :, :, run_idx] = run_perf_stats
+        all_alignments[:, :, :, run_idx] = run_alignments
+
+    # Save output array
+    np.savez_compressed(
+        '2Clustering_Results.npz',
+        perf_stats=perf_stats,
+        all_alignments=all_alignments,
+    )
+    print("\nProcessing complete! Saved to Clustering_Results.npz.")
