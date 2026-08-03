@@ -28,6 +28,7 @@ n_wavelets = stats.shape[1]
 # Code to convert sound percents to SNR
 noise_step = 0.20
 
+
 def snr_label(noise_idx, noise_step=noise_step):
     ratio = noise_idx * noise_step
     if ratio == 0:
@@ -37,6 +38,21 @@ def snr_label(noise_idx, noise_step=noise_step):
 
 noise_labels = [snr_label(i) for i in range(n_noise)]
 
+
+# Function that helps generate error bars for minimum
+# (Also tends to slow down the graph generation code)
+def get_bootstrap_min_ci(df, n_boot=1000):
+    ci_values = []
+    for _, group in df.groupby(['Noise Level #', 'Method'], observed=True):
+        vals = group['Alignment'].values
+        if len(vals) == 0:
+            ci_values.append(0)
+            continue
+        boot_mins = np.min(np.random.choice(vals, size=(n_boot, len(vals)), replace=True), axis=1)
+        ci_lower = np.percentile(boot_mins, 2.5)
+        ci_upper = np.percentile(boot_mins, 97.5)
+        ci_values.append((ci_upper - ci_lower) / 2)
+    return ci_values
 
 
 # List to hold the row data for run-level statistics
@@ -89,23 +105,34 @@ plot_df = pd.concat([df_raw, grand_avg_df], ignore_index=True)
 noise_order = noise_labels + ['Grand Average']
 plot_df['Noise Level #'] = pd.Categorical(plot_df['Noise Level #'], categories=noise_order, ordered=True)
 
-# Compute mean, sem, count, 25th/10th percentiles, and minimum from ALL raw data points
+# Compute mean, sem, count, 25th/10th percentiles, and minimum from all data points
 summary = (
     plot_df.groupby(['Noise Level #', 'Method'], observed=True)['Alignment']
     .agg(
         mean='mean',
         sem='sem',
         count='count',
-        q25=lambda x: np.percentile(x, 25), # 25th percentile
-        q10=lambda x: np.percentile(x, 10), # 10th percentile
-        min_val='min'                       # Min value
+        std='std',
+        # 25th percentile
+        q25=lambda x: np.percentile(x, 25),
+        # 10th percentile 
+        q10=lambda x: np.percentile(x, 10), 
+        # Min value
+        min_val='min'                       
     )
     .reset_index()
 )
 
-# 95% Confidence Interval across raw points
+# 95% Confidence Interval across raw points for the mean
 t_crit = scipy_stats.t.ppf(0.975, summary['count'] - 1)
-summary['ci95'] = t_crit * summary['sem']
+summary['ci95_mean'] = t_crit * summary['sem']
+
+# 95% confident interval for 25% and 10% quartile points (Values come from the density of the normal distribution at the 25th and 10th percentiles)
+summary['ci95_q25'] = t_crit * (1.36 * summary['std'] / np.sqrt(summary['count']))
+summary['ci95_q10'] = t_crit * (1.71 * summary['std'] / np.sqrt(summary['count']))
+
+# Compute realistic 95% CI for minimums
+summary['ci95_min'] = get_bootstrap_min_ci(plot_df)
 
 
 # Plotting
@@ -127,7 +154,7 @@ for i, method in enumerate(method_names):
     line, caps, bars = plt.errorbar(
         x_positions + offsets[i],
         sub['mean'].values,
-        yerr=sub['ci95'].values,
+        yerr=sub['ci95_mean'].values,
         marker='o',
         linestyle='none',
         capsize=3,
@@ -141,33 +168,39 @@ for i, method in enumerate(method_names):
         cap.set_alpha(0.75)
 
     # 25th Percentile marker - ('v' marker)
-    plt.plot(
+    plt.errorbar(
         x_positions + offsets[i],
         sub['q25'].values,
+        yerr=sub['ci95_q25'].values,
         marker='v',
         linestyle='none',
+        capsize=3,
         color=colors[i],
         alpha=0.8,
         markersize=6
     )
 
     # 10th Percentile marker - ('s' marker)
-    plt.plot(
+    plt.errorbar(
         x_positions + offsets[i],
         sub['q10'].values,
+        yerr=sub['ci95_q10'].values,
         marker='s',
         linestyle='none',
+        capsize=3,
         color=colors[i],
         alpha=0.7,
         markersize=6
     )
 
     # Minimum value marker - ('^' marker)
-    plt.plot(
+    plt.errorbar(
         x_positions + offsets[i],
         sub['min_val'].values,
+        yerr=sub['ci95_min'].values,
         marker='^',
         linestyle='none',
+        capsize=3,
         color=colors[i],
         alpha=0.5,
         markersize=6
